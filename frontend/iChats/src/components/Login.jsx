@@ -11,7 +11,7 @@ const delay = (d) => {
     }
 
 const Login = () => {
-    const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: 'onChange'});
+    const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
     const onSubmit = async (data) => {
         await delay(2);
         console.log(data)
@@ -21,7 +21,7 @@ const Login = () => {
         <div style={{ backgroundImage: `url(${spaceBackground})`}} className="h-screen box-border flex justify-center items-center w-screen bg-no-repeat object-bottom-right bg-cover">
             <div className='w-2/5 h-3/4 rounded-lg flex flex-col justify-center items-center'>
                 <div className='flex flex-col w-full h-[35%] justify-center items-center '>
-                    <h3 className='text-4xl font-bold text-white'>Welcome to iChats</h3>
+                    <h3 className='text-5xl font-bold text-white'>Welcome to iChats</h3>
                 </div>
 
                 <form onSubmit={handleSubmit(onSubmit)} className='flex flex-col w-full  h-[60%] justify-center items-center gap-3'>
