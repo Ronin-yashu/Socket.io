@@ -1,5 +1,10 @@
 import React from 'react'
 import { useForm } from 'react-hook-form'
+import { useNavigate } from 'react-router-dom';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
+ import { toast } from 'react-toastify';
+
 const delay = (d) => {
         return new Promise((resolve, reject) => {
             setTimeout(() => {
@@ -9,8 +14,8 @@ const delay = (d) => {
     }
 
 const Register = () => {
-
-  const { register, handleSubmit,watch, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
+  const navigate = useNavigate();
+  const { register, handleSubmit,watch,reset, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
 
       const onSubmit = async (data) => {
           await delay(2);
@@ -23,18 +28,26 @@ const Register = () => {
             }
             const result = await response.json();
             console.log(result);
+            toast.success('Operation successful!');
+            toast.info('Redirecting to login page...');
+            setTimeout(() => {
+              navigate('/'); 
+            }, 6000);
 
           } catch (error) {
             console.log("There was a problem with the fetch operation:", error);
+            toast.error('Operation failed!');
           }
+          reset()
+          
       }
   return (
     <div className="h-screen w-screen bg-[url('./assets/space.jpg')] bg-no-repeat object-bottom-right bg-cover flex justify-center items-center box-border">
-      <div className='w-1/2 h-4/5 rounded-lg flex justify-center items-center bg-gray-50 opacity-30 '>
+      <div className='w-1/2 h-4/5 rounded-lg flex justify-center items-center bg-white/20 backdrop-blur-md shadow-2xl'>
         <div className='w-full h-full flex flex-col justify-center items-center z-10 p-5'>
 
           <div className='w-full h-[10%] flex justify-center items-center'>
-            <h1 className='text-3xl font-bold'>Create your account</h1>
+            <h1 className='text-4xl font-bold'>Create your account</h1>
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className='flex flex-col w-full  h-[90%] justify-center items-center gap-3'>
@@ -71,10 +84,13 @@ const Register = () => {
                 <input
                   type='tel'
                   className='w-2xs p-2 rounded-3xl border-2 border-gray-400'
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   {...register("number", {
                     required: "Enter valid number",
                     minLength: { value: 10, message: "Enter valid number" },
-                    maxLength: { value: 10, message: "Enter valid number" }
+                    maxLength: { value: 10, message: "Enter valid number" },
+                    pattern: { value: /^[0-9]+$/, message: "Only numbers are allowed" }
                   })}
                   placeholder='Enter your number'
                 />
@@ -85,6 +101,7 @@ const Register = () => {
           </form>
         </div>
       </div>
+      <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="light"/>
     </div>
   )
 }

@@ -2,6 +2,7 @@ import React from 'react'
 import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
 import spaceBackground from '../assets/space.jpg'
+import { useNavigate } from 'react-router-dom';
 const delay = (d) => {
         return new Promise((resolve, reject) => {
             setTimeout(() => {
@@ -11,6 +12,7 @@ const delay = (d) => {
     }
 
 const Login = () => {
+    const navigate = useNavigate();
     const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
     const onSubmit = async (data) => {
         await delay(2);
