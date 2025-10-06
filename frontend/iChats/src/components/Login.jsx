@@ -3,6 +3,8 @@ import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
 import spaceBackground from '../assets/space.jpg'
 import { useNavigate } from 'react-router-dom';
+import { ToastContainer } from 'react-toastify';
+import { toast } from 'react-toastify';
 const delay = (d) => {
         return new Promise((resolve, reject) => {
             setTimeout(() => {
@@ -13,10 +15,37 @@ const delay = (d) => {
 
 const Login = () => {
     const navigate = useNavigate();
-    const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
+    const { register,reset, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
     const onSubmit = async (data) => {
-        await delay(2);
+        await delay(1);
         console.log(data)
+        try {
+            const response = await fetch('/api/login', { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify(data)});
+
+            if (response.ok) {
+            const result = await response.json();
+            toast.success(result.message);
+            reset()
+            setTimeout(() => {
+                navigate('/Home');
+            }, 2000);
+            } else {
+            const errorData = await response.json();
+            if (response.status === 400 && errorData.errors) {
+                toast.error(errorData.message || 'Please correct the form errors.');
+                Object.values(errorData.errors).forEach(errMsg => {
+                toast.error(errMsg);
+                });
+            } else {
+                toast.error(errorData.message || 'An unknown error occurred.');
+            }
+            }
+        } catch (error) {
+            toast.error('Network error: Could not connect to the server.');
+        }
     }
 
     return (
@@ -49,6 +78,7 @@ const Login = () => {
                     </ul>
                 </div>
             </div>
+            <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="light" />
         </div>
     )
 }

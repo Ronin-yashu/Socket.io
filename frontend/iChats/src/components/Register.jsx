@@ -3,44 +3,49 @@ import { useForm } from 'react-hook-form'
 import { useNavigate } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
- import { toast } from 'react-toastify';
+import { toast } from 'react-toastify';
 
 const delay = (d) => {
-        return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                resolve();
-            }, d * 1000);
-        })
-    }
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve();
+    }, d * 1000);
+  })
+}
 
 const Register = () => {
   const navigate = useNavigate();
-  const { register, handleSubmit,watch,reset, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
-
-      const onSubmit = async (data) => {
-          await delay(2);
-          console.log(data)
-          try {
-            const response =  await fetch('http://localhost:3000/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-
-            if (!response.ok) {
-              throw new Error('Network response was not ok');
-            }
-            const result = await response.json();
-            console.log(result);
-            toast.success('Operation successful!');
-            toast.info('Redirecting to login page...');
-            setTimeout(() => {
-              navigate('/'); 
-            }, 6000);
-
-          } catch (error) {
-            console.log("There was a problem with the fetch operation:", error);
-            toast.error('Operation failed!');
-          }
-          reset()
-          
+  const { register, handleSubmit, watch, reset, formState: { errors, isSubmitting } } = useForm({ mode: "onChange" });
+  const onSubmit = async (data) => {
+    await delay(2);
+    console.log(data)
+    try {
+      const response = await fetch('/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+      if (response.ok) {
+        const result = await response.json();
+        toast.success(result.message);
+      } else {
+        const errorData = await response.json();
+        if (response.status === 400 && errorData.errors) {
+          toast.error(errorData.message || 'Please correct the form errors.');
+          Object.values(errorData.errors).forEach(errMsg => {
+            toast.error(errMsg);
+          });
+        } else {
+          toast.error(errorData.message || 'An unknown error occurred.');
+        }
       }
+    } catch (error) {
+      toast.error('Network error: Could not connect to the server.');
+    }
+    toast.info('Redirecting to login page...');
+    reset();
+    await delay(6);
+    setTimeout(() => {
+      navigate('/');
+    }, 6000);
+  };
+
   return (
     <div className="h-screen w-screen bg-[url('./assets/space.jpg')] bg-no-repeat object-bottom-right bg-cover flex justify-center items-center box-border">
       <div className='w-1/2 h-4/5 rounded-lg flex justify-center items-center bg-white/20 backdrop-blur-md shadow-2xl'>
@@ -61,23 +66,21 @@ const Register = () => {
             <input type='password' className='w-2xs p-2 rounded-3xl border-2 border-gray-400' {...register("password", { required: "password is required", minLength: { value: 8, message: "password must be atleast 8 characters long" } })} placeholder='Enter your password' />
 
             <label>
-              <input type="radio" value="NoForgot" {...register("myRadioGroup",{required:"please select a option"})} />
+              <input type="radio" value="NoForgot" {...register("myRadioGroup", { required: "please select a option" })} />
               Do you want a Secure Account ? *You will not be able to recover your account if you forget your password
             </label>
 
             <label>
-              <input type="radio" value="Forgot" {...register("myRadioGroup",{required:"please select a option"})} />
+              <input type="radio" value="Forgot" {...register("myRadioGroup", { required: "please select a option" })} />
               I want to use my phone number to recover my account if I forget my password
             </label>
 
             {errors.myRadioGroup && <span className='text-red-500'>{errors.myRadioGroup.message}</span>}
 
-            {/* Show warning if "NoForgot" is selected */}
             {watch("myRadioGroup") === "NoForgot" && (
               <span className='text-red-500'>*Make sure you remember your password</span>
             )}
 
-            {/* Show number input if "Forgot" is selected */}
             {watch("myRadioGroup") === "Forgot" && (
               <>
                 {errors.number && <span className='text-red-500'>{errors.number.message}</span>}
@@ -101,7 +104,7 @@ const Register = () => {
           </form>
         </div>
       </div>
-      <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="light"/>
+      <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="light" />
     </div>
   )
 }
