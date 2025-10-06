@@ -61,7 +61,7 @@ Follow these steps to get the project running on your local machine.
     ```
 2.  Start the Express server.
     ```bash
-    node server.js
+    npm run dev
     ```
     (The server will run on `http://localhost:3000`).
 
@@ -69,7 +69,7 @@ Follow these steps to get the project running on your local machine.
 
 1.  Navigate to the `frontend` directory and install dependencies.
     ```bash
-    cd ../frontend
+    cd ../frontend/iChats
     npm install
     ```
 2.  Start the Vite development server.
