@@ -17,38 +17,46 @@ const Login = () => {
     const navigate = useNavigate();
     const { register,reset, handleSubmit, formState: { errors, isSubmitting } } = useForm({mode: "onChange"});
     const onSubmit = async (data) => {
-        await delay(1);
-        console.log(data)
-        try {
-            const response = await fetch('/api/login', { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify(data)});
-
-            if (response.ok) {
-            const result = await response.json();
+    await delay(1);
+    console.log(data)
+    try {
+        const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+        if (response.status === 200) {
             localStorage.setItem('authToken', result.token);
             localStorage.setItem('username', result.user.username);
             toast.success(result.message);
-            reset()
+            reset();
             setTimeout(() => {
                 navigate('/Home');
             }, 2000);
-            } else {
-            const errorData = await response.json();
-            if (response.status === 400 && errorData.errors) {
-                toast.error(errorData.message || 'Please correct the form errors.');
-                Object.values(errorData.errors).forEach(errMsg => {
-                toast.error(errMsg);
+        } else if (response.status === 202) {
+            localStorage.setItem('twoFaToken', result.twoFaToken);
+            toast.info(result.message);
+            reset();
+            setTimeout(() => {
+                navigate('/2fa-verify'); 
+            }, 500); 
+        } else {
+            if (response.status === 400 && result.errors) {
+                toast.error(result.message || 'Please correct the form errors.');
+                Object.values(result.errors).forEach(errMsg => {
+                    toast.error(errMsg);
                 });
             } else {
-                toast.error(errorData.message || 'An unknown error occurred.');
+                toast.error(result.message || 'An unknown error occurred.');
             }
-            }
-        } catch (error) {
-            toast.error('Network error: Could not connect to the server.');
+            localStorage.removeItem('authToken'); 
         }
+    } catch (error) {
+        console.error("Critical Frontend Error:", error);
+        toast.error('Network error: Could not connect to the server.');
     }
+};
 
     return (
         <div style={{ backgroundImage: `url(${spaceBackground})`}} className="h-screen box-border flex justify-center items-center w-screen bg-no-repeat object-bottom-right bg-cover">

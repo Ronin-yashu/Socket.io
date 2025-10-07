@@ -6,7 +6,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import Login from './components/Login.jsx'
 import Register from './components/Register.jsx'
 import Forgot from './components/Forgot.jsx'
-
+import TwoFAVerificationPage from './components/TwoFAVerificationPage.jsx'
 
 
 const router = createBrowserRouter([
@@ -27,6 +27,10 @@ const router = createBrowserRouter([
   {
     path:"/Home",
     element:<App />
+  },
+  {
+    path:"/2fa-verify",
+    element:<TwoFAVerificationPage />
   }
 ])
 
