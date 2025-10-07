@@ -2,9 +2,13 @@ import express from "express"
 import cors from "cors"
 import mongoose from "mongoose"
 import { User } from "./models/register.js"
+import jwt from "jsonwebtoken"
+import auth from "./middleware/auth.js"
 
 const app = express()
 const port = 3000
+
+const jwt_secret = 'your_jwt_secret_key_which_is_very_secure_and_long';
 
 try {
   await mongoose.connect('mongodb://localhost:27017/iChats');
@@ -26,6 +30,11 @@ app.get('/', (req, res) => {
   // res.sendFile("../frontend/iChats/public/index.html", { root: process.cwd() });
   res.send('Hello World! Welcome to iChats Backend');
 })
+
+app.get('/api/chats/my-list',auth, (req, res) => {
+  res.json({ message: `Hello ${req.user.username}, you are now E2EE` }); 
+  // chats:[]
+});
 
 app.post('/api/register', async (req, res) => {
   console.log("Registration endpoint hit");
@@ -72,10 +81,13 @@ app.post('/api/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid username or password.' });
     }
+    const token = jwt.sign({ id: user._id, username: user.username }, jwt_secret, { expiresIn: '1h' });
     return res.status(200).json({
       message: 'Login successful!',
+      token: token,
       user: { username: user.username }
     });
+
   } catch (error) {
     console.error("Login Server Error:", error);
     res.status(500).json({ message: 'An unexpected server error occurred.' });

@@ -27,6 +27,8 @@ const Login = () => {
 
             if (response.ok) {
             const result = await response.json();
+            localStorage.setItem('authToken', result.token);
+            localStorage.setItem('username', result.user.username);
             toast.success(result.message);
             reset()
             setTimeout(() => {

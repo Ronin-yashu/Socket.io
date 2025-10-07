@@ -40,7 +40,7 @@ const Register = () => {
     }
     toast.info('Redirecting to login page...');
     reset();
-    await delay(6);
+    await delay(2);
     setTimeout(() => {
       navigate('/');
     }, 6000);
