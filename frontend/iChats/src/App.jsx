@@ -86,7 +86,7 @@ const App = () => {
             setOnlineUserIds(userIds);
           });
 
-          // 🛑 FIX 1: Message Listener - Add the message to state
+          //  FIX 1: Message Listener - Add the message to state
           newSocket.on('receiveMessage', (message) => {
             console.log('Message received:', message);
             // Only add message if it belongs to the current chat
@@ -95,7 +95,7 @@ const App = () => {
             if (isRelevant) {
               setMessages(prevMessages => [...prevMessages, message]);
             } else {
-              // 🛑 FIX 2: Show notification for messages in other chats
+              //  FIX 2: Show notification for messages in other chats
               toast.info(`New message from ${message.senderUsername || 'a user'}!`);
             }
           });
@@ -159,6 +159,7 @@ const App = () => {
 
     const messagePayload = {
       recipientId: selectedContact._id,
+      // recipientId: currentUser.id,
       content: inputMessage.trim(),
       timestamp: new Date().toISOString(),
       // senderId will be added by the server securely
