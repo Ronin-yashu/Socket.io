@@ -5,7 +5,7 @@ import initializeSocket from './socket';
 
 const App = () => {
   const navigate = useNavigate();
-  const messageFeedRef = useRef(null); // Ref for auto-scrolling
+  const messageFeedRef = useRef(null);
   const [socket, setSocket] = useState(null);
   const [onlineUserIds, setOnlineUserIds] = useState([]);
   const [onlineUserProfiles, setOnlineUserProfiles] = useState([]);
@@ -50,7 +50,7 @@ const App = () => {
   useEffect(() => {
     const token = localStorage.getItem('authToken');
     const username = localStorage.getItem('username');
-    const userId = localStorage.getItem('userId'); // Assuming you save this on login
+    const userId = localStorage.getItem('userId');
 
     if (!token) {
       return navigate('/');
@@ -71,10 +71,9 @@ const App = () => {
         if (response.ok) {
           const data = await response.json();
 
-          // Assuming login response also returns ID, but setting default here
           setCurrentUser({
             username: username,
-            id: userId, // CRITICAL: Ensure this ID is available
+            id: userId,
             message: data.message
           });
 
@@ -85,25 +84,10 @@ const App = () => {
           newSocket.on('getOnlineUsers', (userIds) => {
             setOnlineUserIds(userIds);
           });
-
-          //  FIX 1: Message Listener - Add the message to state
-          newSocket.on('receiveMessage', (message) => {
-            console.log('Message received:', message);
-            // Only add message if it belongs to the current chat
-            const isRelevant = message.senderId === selectedContact?._id || message.recipientId === selectedContact?._id;
-
-            if (isRelevant) {
-              setMessages(prevMessages => [...prevMessages, message]);
-            } else {
-              //  FIX 2: Show notification for messages in other chats
-              toast.info(`New message from ${message.senderUsername || 'a user'}!`);
-            }
-          });
-
-
         } else if (response.status === 401) {
           localStorage.removeItem('authToken');
           localStorage.removeItem('username');
+          localStorage.removeItem('userId');
           toast.error('Session expired. Please log in again.');
           setTimeout(() => navigate('/'), 2000);
         }
@@ -123,7 +107,38 @@ const App = () => {
         toast.dismiss('disconnect-warn');
       }
     };
-  }, [navigate, selectedContact]); // Added selectedContact to dependencies to handle message filter on new selection
+  }, [navigate]);
+
+  // NEW EFFECT: Handle Socket Message Listeners (Decoupled from connection)
+  useEffect(() => {
+    if (socket) {
+      const userId = localStorage.getItem('userId');
+
+      const handleReceiveMessage = (message) => {
+        console.log('Message received:', message);
+
+        const isMessageFromSelected = message.senderId === selectedContact?._id;
+        const isMessageToSelected = message.recipientId === selectedContact?._id;
+        const isSelfSender = message.senderId === userId;
+
+        if (
+          (isSelfSender && isMessageToSelected) ||
+          (isMessageFromSelected && message.recipientId === userId)
+        ) {
+          setMessages(prevMessages => [...prevMessages, message]);
+        } else if (message.recipientId === userId && !isSelfSender) {
+          toast.info(`New message from ${message.senderUsername || 'a user'}!`);
+        }
+      };
+
+      socket.on('receiveMessage', handleReceiveMessage);
+
+      return () => {
+        socket.off('receiveMessage', handleReceiveMessage);
+      };
+    }
+  }, [socket, selectedContact, currentUser]);
+
 
   // EFFECT 2: Triggers user profile lookup whenever the list of online IDs changes
   useEffect(() => {
@@ -152,43 +167,41 @@ const App = () => {
   };
 
   const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!socket || !inputMessage.trim() || !selectedContact) {
-      return toast.warn("Cannot send message. Select a user and type a message.");
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
+
+    if (!socket || !inputMessage.trim() || !selectedContact || !currentUser?.id) {
+      toast.warn("Cannot send. Connection or user not fully initialized.");
+      return;
     }
 
     const messagePayload = {
       recipientId: selectedContact._id,
-      // recipientId: currentUser.id,
       content: inputMessage.trim(),
       timestamp: new Date().toISOString(),
-      // senderId will be added by the server securely
     };
 
-    // 💡 EMIT THE MESSAGE TO THE SERVER
+    // EMIT THE MESSAGE TO THE SERVER
     socket.emit('sendMessage', messagePayload);
-
-    // 🛑 FIX 3: NO OPTIMISTIC UPDATE HERE! The message is added when the server echoes it back.
 
     setInputMessage(''); // Clear the input field
   };
 
 
   const MessageBubble = ({ message, senderUsername }) => {
-    // 🛑 FIX 4: Use currentUser.username for comparison
-    // The senderId is now coming from the server, which is better.
-    const isSelf = message.senderId === currentUser?.id;
+    // 🛑 FIX 1: Explicitly convert both IDs to strings for reliable comparison
+    const isSelf = String(message.senderId) === String(currentUser?.id);
 
-    // Use currentUser.username if it's the sender, otherwise use the selected user's name
     const senderName = isSelf ? 'You' : senderUsername;
 
-    // 🛑 FIX 5: Adjust bubble color based on sender
-    const bubbleColor = isSelf ? 'bg-indigo-600' : 'bg-zinc-700';
     const alignment = isSelf ? 'justify-end' : 'justify-start';
+    const bubbleColor = isSelf ? 'bg-indigo-600' : 'bg-zinc-700';
+    const borderRadiusClass = isSelf ? 'rounded-bl-none' : 'rounded-tr-none';
 
     return (
       <div className={`flex ${alignment}`}>
-        <div className={`${bubbleColor} max-w-xs p-3 rounded-xl ${isSelf ? 'rounded-br-none' : 'rounded-tl-none'} shadow-md`}>
+        <div className={`${bubbleColor} max-w-xs p-3 rounded-xl ${borderRadiusClass} shadow-md`}>
           <p className="text-xs font-semibold mb-1 text-gray-300">{senderName}</p>
           <p className="text-sm text-white">{message.content}</p>
           <span className="text-xs text-gray-400 block text-right mt-1">
@@ -288,7 +301,6 @@ const App = () => {
                     key={index}
                     message={message}
                     senderUsername={
-                      // Determine who the message is from for the bubble header
                       message.senderId === currentUser?.id ? currentUser.username : selectedContact.username
                     }
                   />
@@ -357,7 +369,7 @@ const App = () => {
           </div>
         </div>
       </div>
-      <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnFocusLoss draggable pauseOnHover theme="dark" />
+      <ToastContainer position="top-right" autoClose={5000} hideProgressBar={false} newestOnTop={false} closeOnClick rtl={false} pauseOnHover theme="dark" />
     </div>
   );
 };

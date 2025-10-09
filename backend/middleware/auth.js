@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-const jwt_secret = 'your_jwt_secret_key_which_is_very_secure_and_long'; 
+const JWT_SECRET = 'your_jwt_secret_key_which_is_very_secure_and_long'; 
 const auth = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     if (!authHeader) {
@@ -10,7 +10,7 @@ const auth = (req, res, next) => {
     }
     const token = authHeader.replace('Bearer ', '');
     try {
-        const decoded = jwt.verify(token, jwt_secret);
+        const decoded = jwt.verify(token, JWT_SECRET);
         if (!decoded.id || !decoded.username) {
              return res.status(401).json({ message: 'Invalid token payload.' });
         }

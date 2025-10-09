@@ -29,6 +29,7 @@ const Login = () => {
         if (response.status === 200) {
             localStorage.setItem('authToken', result.token);
             localStorage.setItem('username', result.user.username);
+            localStorage.setItem('userId', result.user.id);
             toast.success(result.message);
             reset();
             setTimeout(() => {
