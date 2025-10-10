@@ -166,6 +166,7 @@ app.post('/api/register', authLimiter, async (req, res) => {
   }
 });
 
+
 app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -188,7 +189,10 @@ app.post('/api/login', authLimiter, async (req, res) => {
     return res.status(200).json({
       message: 'Login successful!',
       token: token,
-      user: { username: user.username }
+      user: { 
+        username: user.username,
+        id: user._id.toString() // ✅ ADDED THIS LINE
+      }
     });
   } catch (error) {
     console.error("Login Server Error:", error);
@@ -237,6 +241,7 @@ app.post('/api/2fa/enable', auth, async (req, res) => {
   }
 });
 
+
 app.post('/api/2fa/authenticate', async (req, res) => {
   const { twoFaToken, code } = req.body;
   if (!twoFaToken || !code) {
@@ -259,7 +264,11 @@ app.post('/api/2fa/authenticate', async (req, res) => {
     const token = jwt.sign({ id: user._id, username: user.username }, jwt_secret, { expiresIn: '1h' });
     res.status(200).json({
       message: '2FA verified. Login complete!',
-      token: token
+      token: token,
+      user: {
+        username: user.username,
+        id: user._id.toString() // ✅ ADDED THIS LINE
+      }
     });
   } catch (error) {
     console.error("2FA Authentication Error:", error);
@@ -269,7 +278,6 @@ app.post('/api/2fa/authenticate', async (req, res) => {
     res.status(500).json({ message: 'Server error during 2FA verification.' });
   }
 });
-
 
 app.post('/api/users/lookup', auth, async (req, res) => {
   const { userIds } = req.body;
