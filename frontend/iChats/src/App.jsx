@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast, ToastContainer } from 'react-toastify';
 import initializeSocket from './socket';
-import { Shield, Lock, Send, Search, Menu, X, MoreVertical, Phone, Video, Image, Paperclip, Smile, CheckCheck } from 'lucide-react';
+import useWebRTC from './hooks/useWebRTC';
+import { Shield, Lock, Send, Search, Menu, X, MoreVertical, Phone, Video, Image, Paperclip, Smile, CheckCheck, PhoneOff, Download, File, Mic, MicOff, VideoOff } from 'lucide-react';
 
 const App = () => {
   const navigate = useNavigate();
@@ -15,6 +16,30 @@ const App = () => {
   const [inputMessage, setInputMessage] = useState('');
   const [messages, setMessages] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+
+  // WebRTC Hook
+  const {
+    localStream,
+    remoteStream,
+    isCallActive,
+    callType,
+    incomingCall,
+    localVideoRef,
+    remoteVideoRef,
+    startCall,
+    answerCall,
+    rejectCall,
+    endCall
+  } = useWebRTC(socket, currentUser);
+
+  const [isMuted, setIsMuted] = useState(false);
+  const [isVideoOff, setIsVideoOff] = useState(false);
+
+  // Emoji list
+  const emojis = ['😀', '😂', '🤣', '😊', '😍', '🥰', '😎', '🤔', '😅', '😆', '😉', '😋', '😜', '🤗', '🤩', '😇', '🙂', '🤓', '😏', '😌', '👍', '👎', '👏', '🙌', '🤝', '💪', '🙏', '❤️', '💕', '💯', '🔥', '✨', '🎉', '🎊', '👀', '💀', '😭', '😢', '😡', '😱', '🤯', '😴', '🥱', '🤐', '🤫', '🫡', '🙃', '😶', '😐'];
 
   const fetchUserDetails = async (userIds) => {
     if (userIds.length === 0) {
@@ -54,8 +79,29 @@ const App = () => {
     const username = localStorage.getItem('username');
     const userId = localStorage.getItem('userId');
 
+    console.log('🔍 Checking stored credentials:');
+    console.log('Token:', token ? 'EXISTS' : 'MISSING');
+    console.log('Username from localStorage:', username);
+    console.log('UserId from localStorage:', userId);
+    console.log('All localStorage keys:', Object.keys(localStorage));
+    console.log('All localStorage values:', {
+      authToken: localStorage.getItem('authToken'),
+      username: localStorage.getItem('username'),
+      userId: localStorage.getItem('userId')
+    });
+
     if (!token) {
       return navigate('/');
+    }
+
+    // Set current user immediately from localStorage
+    if (username && userId) {
+      setCurrentUser({
+        username: username,
+        id: userId,
+        message: 'Loading...'
+      });
+      console.log('✅ Current user set from localStorage:', { username, id: userId });
     }
 
     let currentSocket = null;
@@ -73,19 +119,26 @@ const App = () => {
         if (response.ok) {
           const data = await response.json();
 
+          // Update current user with server response
           setCurrentUser({
             username: username,
             id: userId,
             message: data.message
           });
 
+          console.log('✅ Server verification successful:', data.message);
+
           const newSocket = initializeSocket(token, toast);
           currentSocket = newSocket;
           setSocket(newSocket);
 
           newSocket.on('getOnlineUsers', (userIds) => {
+            console.log('👥 Online users received:', userIds);
             setOnlineUserIds(userIds);
           });
+
+          // Request offline messages
+          newSocket.emit('requestOfflineMessages');
         } else if (response.status === 401) {
           localStorage.removeItem('authToken');
           localStorage.removeItem('username');
@@ -94,6 +147,7 @@ const App = () => {
           setTimeout(() => navigate('/'), 2000);
         }
       } catch (error) {
+        console.error('❌ Connection error:', error);
         toast.error('Network error: Could not connect to the server.');
       }
     };
@@ -174,7 +228,27 @@ const App = () => {
 
   const handleSelectContact = (contact) => {
     setSelectedContact(contact);
-    setMessages([]); // Clear messages for new contact
+    setMessages([]); // Clear messages temporarily
+
+    // Fetch message history from backend
+    const token = localStorage.getItem('authToken');
+    fetch(`/api/messages/${contact._id}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setMessages(data);
+        }
+      })
+      .catch(error => {
+        console.error('Error fetching messages:', error);
+        toast.error('Failed to load message history');
+      });
   };
 
   const handleSendMessage = (e) => {
@@ -220,6 +294,7 @@ const App = () => {
       recipientId: selectedContact._id,
       content: inputMessage.trim(),
       timestamp: new Date().toISOString(),
+      type: 'text'
     };
 
     console.log('📤 Sending message payload:', messagePayload);
@@ -228,11 +303,154 @@ const App = () => {
     socket.emit('sendMessage', messagePayload);
 
     setInputMessage(''); // Clear the input field
+    setShowEmojiPicker(false); // Close emoji picker
+  };
+
+  // Handle emoji selection
+  const handleEmojiClick = (emoji) => {
+    setInputMessage(prev => prev + emoji);
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+      toast.error('File size must be less than 10MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const messagePayload = {
+        recipientId: selectedContact._id,
+        content: reader.result,
+        timestamp: new Date().toISOString(),
+        type: 'file',
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size
+      };
+
+      socket.emit('sendMessage', messagePayload);
+      toast.success(`File "${file.name}" sent!`);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Handle image upload
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) { // 5MB limit for images
+      toast.error('Image size must be less than 5MB');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const messagePayload = {
+        recipientId: selectedContact._id,
+        content: reader.result,
+        timestamp: new Date().toISOString(),
+        type: 'image',
+        fileName: file.name
+      };
+
+      socket.emit('sendMessage', messagePayload);
+      toast.success('Image sent!');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Handle voice/video call
+  const handleCall = (type) => {
+    if (!selectedContact) {
+      toast.warn('Please select a contact first');
+      return;
+    }
+    startCall(selectedContact._id, type);
+    toast.info(`Starting ${type} call with ${selectedContact.username}...`);
+  };
+
+  const handleEndCall = () => {
+    endCall();
+    toast.success('Call ended');
+  };
+
+  // Toggle mute
+  const toggleMute = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  // Toggle video
+  const toggleVideo = () => {
+    if (localStream && callType?.type === 'video') {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoOff(!isVideoOff);
+    }
   };
 
   const MessageBubble = ({ message, senderUsername }) => {
     const isSelf = String(message.senderId) === String(currentUser?.id);
     const senderName = isSelf ? 'You' : senderUsername;
+
+    // Render based on message type
+    const renderMessageContent = () => {
+      switch (message.type) {
+        case 'image':
+          return (
+            <div className="space-y-2">
+              <img
+                src={message.content}
+                alt={message.fileName || 'Shared image'}
+                className="rounded-lg max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={() => window.open(message.content, '_blank')}
+              />
+              {message.fileName && (
+                <p className="text-xs text-gray-400">{message.fileName}</p>
+              )}
+            </div>
+          );
+
+        case 'file':
+          return (
+            <div className="flex items-center gap-3 p-3 bg-black/20 rounded-lg">
+              <File className="w-8 h-8" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{message.fileName}</p>
+                <p className="text-xs text-gray-400">
+                  {(message.fileSize / 1024).toFixed(2)} KB
+                </p>
+              </div>
+              <a
+                href={message.content}
+                download={message.fileName}
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <Download className="w-5 h-5" />
+              </a>
+            </div>
+          );
+
+        default:
+          return <p className="text-sm leading-relaxed">{message.content}</p>;
+      }
+    };
 
     return (
       <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-4 animate-slideIn`}>
@@ -248,7 +466,7 @@ const App = () => {
                 : 'bg-gray-800 text-gray-100 rounded-bl-none'
               } shadow-lg backdrop-blur-sm`}>
               {!isSelf && <p className="text-xs font-semibold mb-1 text-purple-300">{senderName}</p>}
-              <p className="text-sm leading-relaxed">{message.content}</p>
+              {renderMessageContent()}
             </div>
             <div className="flex items-center gap-1 mt-1 px-2">
               <span className="text-xs text-gray-500">
@@ -396,10 +614,18 @@ const App = () => {
             <div className="flex items-center gap-2">
               {selectedContact && (
                 <>
-                  <button className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleCall('audio')}
+                    className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors"
+                    title="Voice Call"
+                  >
                     <Phone className="w-5 h-5" />
                   </button>
-                  <button className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors">
+                  <button
+                    onClick={() => handleCall('video')}
+                    className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors"
+                    title="Video Call"
+                  >
                     <Video className="w-5 h-5" />
                   </button>
                   <button className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors">
@@ -418,6 +644,110 @@ const App = () => {
 
           {/* Messages Area */}
           <div ref={messageFeedRef} className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            {/* Call Overlay */}
+            {isCallActive && (
+              <div className="fixed inset-0 bg-black/95 backdrop-blur-lg z-50 flex items-center justify-center">
+                <div className="w-full h-full relative">
+                  {/* Remote Video (Full Screen) */}
+                  {callType?.type === 'video' && (
+                    <video
+                      ref={remoteVideoRef}
+                      autoPlay
+                      playsInline
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+
+                  {/* Local Video (Picture-in-Picture) */}
+                  {callType?.type === 'video' && (
+                    <div className="absolute top-4 right-4 w-48 h-36 bg-gray-900 rounded-lg overflow-hidden shadow-2xl border-2 border-gray-700">
+                      <video
+                        ref={localVideoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-cover mirror"
+                      />
+                    </div>
+                  )}
+
+                  {/* Call Info */}
+                  <div className="absolute top-8 left-1/2 transform -translate-x-1/2 text-center">
+                    <h2 className="text-2xl font-bold text-white mb-2">
+                      {selectedContact?.username}
+                    </h2>
+                    <p className="text-gray-300">
+                      {callType?.type === 'video' ? 'Video' : 'Voice'} Call in progress...
+                    </p>
+                  </div>
+
+                  {/* Call Controls */}
+                  <div className="absolute bottom-12 left-1/2 transform -translate-x-1/2 flex gap-4">
+                    <button
+                      onClick={toggleMute}
+                      className={`p-4 rounded-full ${isMuted ? 'bg-red-600' : 'bg-gray-700'} hover:bg-gray-600 transition-colors`}
+                      title={isMuted ? 'Unmute' : 'Mute'}
+                    >
+                      {isMuted ? <MicOff className="w-6 h-6 text-white" /> : <Mic className="w-6 h-6 text-white" />}
+                    </button>
+
+                    {callType?.type === 'video' && (
+                      <button
+                        onClick={toggleVideo}
+                        className={`p-4 rounded-full ${isVideoOff ? 'bg-red-600' : 'bg-gray-700'} hover:bg-gray-600 transition-colors`}
+                        title={isVideoOff ? 'Turn on video' : 'Turn off video'}
+                      >
+                        {isVideoOff ? <VideoOff className="w-6 h-6 text-white" /> : <Video className="w-6 h-6 text-white" />}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={handleEndCall}
+                      className="p-4 rounded-full bg-red-600 hover:bg-red-700 transition-colors"
+                      title="End call"
+                    >
+                      <PhoneOff className="w-6 h-6 text-white" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Incoming Call Modal */}
+            {incomingCall && !isCallActive && (
+              <div className="fixed inset-0 bg-black/80 backdrop-blur-lg z-50 flex items-center justify-center">
+                <div className="bg-gray-800 rounded-2xl p-8 text-center max-w-md w-full mx-4 shadow-2xl">
+                  <div className="w-24 h-24 mx-auto mb-4 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center animate-pulse">
+                    {incomingCall.callType === 'video' ? (
+                      <Video className="w-12 h-12 text-white" />
+                    ) : (
+                      <Phone className="w-12 h-12 text-white" />
+                    )}
+                  </div>
+                  <h2 className="text-2xl font-bold mb-2">{incomingCall.fromUsername}</h2>
+                  <p className="text-gray-400 mb-8">
+                    Incoming {incomingCall.callType} call...
+                  </p>
+                  <div className="flex gap-4 justify-center">
+                    <button
+                      onClick={rejectCall}
+                      className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded-full flex items-center gap-2 transition-colors"
+                    >
+                      <PhoneOff className="w-5 h-5" />
+                      Decline
+                    </button>
+                    <button
+                      onClick={answerCall}
+                      className="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-full flex items-center gap-2 transition-colors"
+                    >
+                      <Phone className="w-5 h-5" />
+                      Answer
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!selectedContact ? (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <div className="w-32 h-32 mb-6 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-600/20 flex items-center justify-center backdrop-blur-sm border border-indigo-500/20">
@@ -462,11 +792,37 @@ const App = () => {
           {selectedContact && (
             <footer className="border-t border-gray-800/50 p-4 bg-gray-900/50 backdrop-blur-xl">
               <form onSubmit={handleSendMessage} className="flex items-end gap-3">
+                {/* File inputs (hidden) */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept="*/*"
+                />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  accept="image/*"
+                />
+
                 <div className="flex gap-2">
-                  <button type="button" className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white"
+                    title="Attach File"
+                  >
                     <Paperclip className="w-5 h-5" />
                   </button>
-                  <button type="button" className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white">
+                  <button
+                    type="button"
+                    onClick={() => imageInputRef.current?.click()}
+                    className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white"
+                    title="Send Image"
+                  >
                     <Image className="w-5 h-5" />
                   </button>
                 </div>
@@ -485,9 +841,31 @@ const App = () => {
                     }}
                     className="w-full bg-gray-800/50 text-gray-200 px-4 py-3 pr-12 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 border border-gray-700/50 transition-all"
                   />
-                  <button type="button" className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                  >
                     <Smile className="w-5 h-5" />
                   </button>
+
+                  {/* Emoji Picker */}
+                  {showEmojiPicker && (
+                    <div className="absolute bottom-full right-0 mb-2 bg-gray-800 border border-gray-700 rounded-xl p-3 shadow-2xl w-80 max-h-64 overflow-y-auto custom-scrollbar">
+                      <div className="grid grid-cols-8 gap-2">
+                        {emojis.map((emoji, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => handleEmojiClick(emoji)}
+                            className="text-2xl hover:bg-gray-700 rounded p-2 transition-colors"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -565,6 +943,10 @@ const App = () => {
 
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background: rgba(99, 102, 241, 0.7);
+        }
+
+        .mirror {
+          transform: scaleX(-1);
         }
       `}} />
     </div>

@@ -2,6 +2,7 @@ import express from "express"
 import cors from "cors"
 import mongoose from "mongoose"
 import { User } from "./models/register.js"
+import { Message } from "./models/message.js"
 import jwt from "jsonwebtoken"
 import auth from "./middleware/auth.js"
 import rateLimit from 'express-rate-limit';
@@ -21,7 +22,8 @@ const io = new Server(server, {
   cors: {
     origin: 'http://localhost:5173',
     methods: ['GET', 'POST']
-  }
+  },
+  maxHttpBufferSize: 10e6 // 10MB for file uploads
 });
 
 io.use((socket, next) => {
@@ -54,7 +56,8 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for file uploads
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -65,7 +68,6 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
 
 const generalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -92,39 +94,193 @@ io.on('connection', (socket) => {
   broadcastOnlineUsers(io);
 
   // ----------------------------------------------------
-  // 💡 IMPLEMENTED: MESSAGE HANDLER LOGIC
+  // MESSAGE HANDLER - Supports text, images, and files
   // ----------------------------------------------------
-  socket.on('sendMessage', (messagePayload) => {
+  socket.on('sendMessage', async (messagePayload) => {
     const recipientId = messagePayload.recipientId;
     const recipientSocketId = onlineUsers.get(recipientId);
 
-    // 1. Construct the final message object (Server-validated structure)
+    // Construct the message object
     const fullMessage = {
-      senderId: userId, // Secure ID from JWT
+      senderId: userId,
+      senderUsername: username,
       recipientId: recipientId,
       content: messagePayload.content,
-      timestamp: messagePayload.timestamp, // Use client timestamp for optimistic update match
+      timestamp: messagePayload.timestamp || new Date().toISOString(),
+      type: messagePayload.type || 'text',
+      fileName: messagePayload.fileName || null,
+      fileType: messagePayload.fileType || null,
+      fileSize: messagePayload.fileSize || null
     };
 
-    // 2. Send the message back to the SENDER (The client listens for 'receiveMessage')
-    socket.emit('receiveMessage', fullMessage);
+    console.log(`[MESSAGE] ${username} -> ${recipientId} (${fullMessage.type})`);
 
-    // 3. Send the message to the RECIPIENT if they are currently online
-    if (recipientSocketId) {
-      io.to(recipientSocketId).emit('receiveMessage', fullMessage);
-    } else {
-      // (Later: Persistence logic for offline messages)
-      console.log(`User ${recipientId} is offline. Message not delivered yet.`);
+    try {
+      // Save message to database
+      const savedMessage = await Message.create({
+        senderId: userId,
+        senderUsername: username,
+        recipientId: recipientId,
+        content: messagePayload.content,
+        type: messagePayload.type || 'text',
+        fileName: messagePayload.fileName || null,
+        fileType: messagePayload.fileType || null,
+        fileSize: messagePayload.fileSize || null,
+        timestamp: new Date(messagePayload.timestamp || Date.now()),
+        delivered: recipientSocketId ? true : false,
+        read: false
+      });
+
+      // Add the database ID to the message
+      fullMessage._id = savedMessage._id.toString();
+
+      // Send back to sender
+      socket.emit('receiveMessage', fullMessage);
+
+      // Send to recipient if online
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('receiveMessage', fullMessage);
+        console.log(`[MESSAGE] Delivered to recipient`);
+      } else {
+        console.log(`[MESSAGE] Recipient ${recipientId} is offline - message stored in DB`);
+      }
+    } catch (error) {
+      console.error('[MESSAGE] Error saving message:', error);
+      socket.emit('messageError', { error: 'Failed to send message' });
     }
   });
-  // ----------------------------------------------------
 
+  // Request offline messages
+  socket.on('requestOfflineMessages', async () => {
+    try {
+      const offlineMessages = await Message.find({
+        recipientId: userId,
+        delivered: false
+      }).sort({ timestamp: 1 });
+
+      if (offlineMessages.length > 0) {
+        console.log(`[OFFLINE] Sending ${offlineMessages.length} offline messages to ${username}`);
+
+        offlineMessages.forEach(msg => {
+          socket.emit('receiveMessage', {
+            _id: msg._id.toString(),
+            senderId: msg.senderId.toString(),
+            senderUsername: msg.senderUsername,
+            recipientId: msg.recipientId.toString(),
+            content: msg.content,
+            type: msg.type,
+            fileName: msg.fileName,
+            fileType: msg.fileType,
+            fileSize: msg.fileSize,
+            timestamp: msg.timestamp
+          });
+        });
+
+        // Mark as delivered
+        await Message.updateMany(
+          { recipientId: userId, delivered: false },
+          { delivered: true }
+        );
+      }
+    } catch (error) {
+      console.error('[OFFLINE] Error fetching offline messages:', error);
+    }
+  });
+
+  // ----------------------------------------------------
+  // CALL HANDLERS - Voice and Video calls
+  // ----------------------------------------------------
+  socket.on('callUser', ({ to, callType }) => {
+    const recipientSocketId = onlineUsers.get(to);
+
+    if (recipientSocketId) {
+      console.log(`[CALL] ${username} calling ${to} (${callType})`);
+      io.to(recipientSocketId).emit('incomingCall', {
+        from: userId,
+        fromUsername: username,
+        callType: callType
+      });
+    } else {
+      socket.emit('callFailed', { message: 'User is offline' });
+    }
+  });
+
+  socket.on('answerCall', ({ to, answer }) => {
+    const recipientSocketId = onlineUsers.get(to);
+
+    if (recipientSocketId) {
+      console.log(`[CALL] ${username} answered call from ${to}`);
+      io.to(recipientSocketId).emit('callAnswered', {
+        from: userId,
+        answer: answer
+      });
+    }
+  });
+
+  socket.on('endCall', ({ to }) => {
+    const recipientSocketId = onlineUsers.get(to);
+
+    if (recipientSocketId) {
+      console.log(`[CALL] ${username} ended call with ${to}`);
+      io.to(recipientSocketId).emit('callEnded', {
+        from: userId
+      });
+    }
+  });
+
+  socket.on('rejectCall', ({ to }) => {
+    const recipientSocketId = onlineUsers.get(to);
+
+    if (recipientSocketId) {
+      console.log(`[CALL] ${username} rejected call from ${to}`);
+      io.to(recipientSocketId).emit('callRejected', {
+        from: userId
+      });
+    }
+  });
+
+  // WebRTC signaling
+  socket.on('iceCandidate', ({ to, candidate }) => {
+    const recipientSocketId = onlineUsers.get(to);
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit('iceCandidate', {
+        from: userId,
+        candidate: candidate
+      });
+    }
+  });
+
+  socket.on('offer', ({ to, offer }) => {
+    const recipientSocketId = onlineUsers.get(to);
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit('offer', {
+        from: userId,
+        offer: offer
+      });
+    }
+  });
+
+  socket.on('answer', ({ to, answer }) => {
+    const recipientSocketId = onlineUsers.get(to);
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit('answer', {
+        from: userId,
+        answer: answer
+      });
+    }
+  });
+
+  // ----------------------------------------------------
+  // DISCONNECT HANDLER
+  // ----------------------------------------------------
   socket.on('disconnect', () => {
     console.log(`[SOCKET] User disconnected: ${username}`);
     onlineUsers.delete(userId);
     broadcastOnlineUsers(io);
   });
 });
+
+// REST API ROUTES
 
 app.get('/', generalLimiter, (req, res) => {
   res.send('Hello World! Welcome to iChats Backend');
@@ -166,7 +322,6 @@ app.post('/api/register', authLimiter, async (req, res) => {
   }
 });
 
-
 app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -189,9 +344,9 @@ app.post('/api/login', authLimiter, async (req, res) => {
     return res.status(200).json({
       message: 'Login successful!',
       token: token,
-      user: { 
+      user: {
         username: user.username,
-        id: user._id.toString() // ✅ ADDED THIS LINE
+        id: user._id.toString()
       }
     });
   } catch (error) {
@@ -241,7 +396,6 @@ app.post('/api/2fa/enable', auth, async (req, res) => {
   }
 });
 
-
 app.post('/api/2fa/authenticate', async (req, res) => {
   const { twoFaToken, code } = req.body;
   if (!twoFaToken || !code) {
@@ -267,7 +421,7 @@ app.post('/api/2fa/authenticate', async (req, res) => {
       token: token,
       user: {
         username: user.username,
-        id: user._id.toString() // ✅ ADDED THIS LINE
+        id: user._id.toString()
       }
     });
   } catch (error) {
@@ -296,6 +450,49 @@ app.post('/api/users/lookup', auth, async (req, res) => {
   }
 });
 
+// MESSAGE HISTORY ROUTES
+app.get('/api/messages/:recipientId', auth, async (req, res) => {
+  const { recipientId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const messages = await Message.find({
+      $or: [
+        { senderId: userId, recipientId: recipientId },
+        { senderId: recipientId, recipientId: userId }
+      ]
+    })
+      .sort({ timestamp: 1 })
+      .limit(100);
+
+    // Mark messages as delivered
+    await Message.updateMany(
+      { recipientId: userId, senderId: recipientId, delivered: false },
+      { delivered: true }
+    );
+
+    res.status(200).json(messages);
+  } catch (error) {
+    console.error("Fetch Messages Error:", error);
+    res.status(500).json({ message: 'Failed to fetch messages.' });
+  }
+});
+
+app.post('/api/messages/read', auth, async (req, res) => {
+  const { messageIds } = req.body;
+  const userId = req.user.id;
+
+  try {
+    await Message.updateMany(
+      { _id: { $in: messageIds }, recipientId: userId },
+      { read: true }
+    );
+    res.status(200).json({ message: 'Messages marked as read' });
+  } catch (error) {
+    console.error("Mark Read Error:", error);
+    res.status(500).json({ message: 'Failed to mark messages as read.' });
+  }
+});
 
 server.listen(port, () => {
   console.log(`Express and Socket.IO listening on port ${port}`);
