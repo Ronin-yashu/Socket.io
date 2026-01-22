@@ -11,7 +11,7 @@ import qrcode from 'qrcode';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 
-const jwt_secret = 'your_jwt_secret_key_which_is_very_secure_and_long';
+const jwt_secret = process.env.JWT_SECRET;
 
 const app = express()
 const port = 3000
@@ -41,7 +41,7 @@ io.use((socket, next) => {
   }
 });
 
-const ATLAS_URI = 'mongodb+srv://yashujaat880_db_user:u2rNWSIzuUt7IOuH@ichats.z28quig.mongodb.net/?retryWrites=true&w=majority&appName=iChats';
+const ATLAS_URI = process.env.ATLAS_URI;
 const clientOptions = { serverApi: { version: '1', strict: true, deprecationErrors: true } };
 try {
   await mongoose.connect(ATLAS_URI, clientOptions);

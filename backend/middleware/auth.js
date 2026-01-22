@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-const JWT_SECRET = 'your_jwt_secret_key_which_is_very_secure_and_long'; 
+const JWT_SECRET = process.env.JWT_SECRET; 
 const auth = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     if (!authHeader) {
