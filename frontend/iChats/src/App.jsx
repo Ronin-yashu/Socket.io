@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast, ToastContainer } from 'react-toastify';
 import initializeSocket from './socket';
@@ -20,6 +20,9 @@ const App = () => {
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
 
+  // Memoize emoji list
+  const emojis = useMemo(() => ['😀', '😂', '🤣', '😊', '😍', '🥰', '😎', '🤔', '😅', '😆', '😉', '😋', '😜', '🤗', '🤩', '😇', '🙂', '🤓', '😏', '😌', '👍', '👎', '👏', '🙌', '🤝', '💪', '🙏', '❤️', '💕', '💯', '🔥', '✨', '🎉', '🎊', '👀', '💀', '😭', '😢', '😡', '😱', '🤯', '😴', '🥱', '🤐', '🤫', '🫡', '🙃', '😶', '😐'], []);
+
   // WebRTC Hook
   const {
     localStream,
@@ -38,10 +41,8 @@ const App = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
 
-  // Emoji list
-  const emojis = ['😀', '😂', '🤣', '😊', '😍', '🥰', '😎', '🤔', '😅', '😆', '😉', '😋', '😜', '🤗', '🤩', '😇', '🙂', '🤓', '😏', '😌', '👍', '👎', '👏', '🙌', '🤝', '💪', '🙏', '❤️', '💕', '💯', '🔥', '✨', '🎉', '🎊', '👀', '💀', '😭', '😢', '😡', '😱', '🤯', '😴', '🥱', '🤐', '🤫', '🫡', '🙃', '😶', '😐'];
-
-  const fetchUserDetails = async (userIds) => {
+  // Memoized fetch user details
+  const fetchUserDetails = useCallback(async (userIds) => {
     if (userIds.length === 0) {
       setOnlineUserProfiles([]);
       return;
@@ -71,7 +72,7 @@ const App = () => {
     } catch (error) {
       toast.error('Network error: Could not connect to the server for user details.');
     }
-  };
+  }, [navigate]);
 
   // EFFECT 1: Connects to the server, verifies JWT, and handles socket creation/cleanup.
   useEffect(() => {
@@ -172,8 +173,6 @@ const App = () => {
 
       const handleReceiveMessage = (message) => {
         console.log('Message received:', message);
-        console.log('Current userId:', userId);
-        console.log('Selected contact:', selectedContact);
 
         // Convert all IDs to strings for reliable comparison
         const messageSenderId = String(message.senderId);
@@ -185,10 +184,6 @@ const App = () => {
         const isMessageToSelected = messageRecipientId === selectedContactId;
         const isSelfSender = messageSenderId === currentUserId;
 
-        console.log('isSelfSender:', isSelfSender);
-        console.log('isMessageToSelected:', isMessageToSelected);
-        console.log('isMessageFromSelected:', isMessageFromSelected);
-
         // Show message if:
         // 1. I sent it to the selected contact
         // 2. The selected contact sent it to me
@@ -197,12 +192,17 @@ const App = () => {
           (isMessageFromSelected && messageRecipientId === currentUserId)
         ) {
           console.log('✅ Adding message to chat');
-          setMessages(prevMessages => [...prevMessages, message]);
+          setMessages(prevMessages => {
+            // Prevent duplicate messages
+            const exists = prevMessages.some(msg => 
+              msg._id && message._id && msg._id === message._id
+            );
+            if (exists) return prevMessages;
+            return [...prevMessages, message];
+          });
         } else if (messageRecipientId === currentUserId && !isSelfSender) {
           console.log('📬 New message from another user');
           toast.info(`New message from ${message.senderUsername || 'a user'}!`);
-        } else {
-          console.log('❌ Message not for current conversation');
         }
       };
 
@@ -226,10 +226,10 @@ const App = () => {
     }
   }, [messages]);
 
-  const handleSelectContact = (contact) => {
+  const handleSelectContact = useCallback((contact) => {
     setSelectedContact(contact);
     setMessages([]); // Clear messages temporarily
-
+    
     // Fetch message history from backend
     const token = localStorage.getItem('authToken');
     fetch(`/api/messages/${contact._id}`, {
@@ -239,19 +239,24 @@ const App = () => {
         'Content-Type': 'application/json'
       }
     })
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setMessages(data);
-        }
-      })
-      .catch(error => {
-        console.error('Error fetching messages:', error);
-        toast.error('Failed to load message history');
-      });
-  };
+    .then(res => res.json())
+    .then(data => {
+      if (Array.isArray(data)) {
+        // Convert _id to string for consistency
+        const formattedMessages = data.map(msg => ({
+          ...msg,
+          _id: msg._id ? msg._id.toString() : undefined
+        }));
+        setMessages(formattedMessages);
+      }
+    })
+    .catch(error => {
+      console.error('Error fetching messages:', error);
+      toast.error('Failed to load message history');
+    });
+  }, []);
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = useCallback((e) => {
     if (e && e.preventDefault) {
       e.preventDefault();
     }
@@ -304,15 +309,15 @@ const App = () => {
 
     setInputMessage(''); // Clear the input field
     setShowEmojiPicker(false); // Close emoji picker
-  };
+  }, [socket, inputMessage, selectedContact, currentUser]);
 
   // Handle emoji selection
-  const handleEmojiClick = (emoji) => {
+  const handleEmojiClick = useCallback((emoji) => {
     setInputMessage(prev => prev + emoji);
-  };
+  }, []);
 
   // Handle file upload
-  const handleFileUpload = async (e) => {
+  const handleFileUpload = useCallback(async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -337,10 +342,10 @@ const App = () => {
       toast.success(`File "${file.name}" sent!`);
     };
     reader.readAsDataURL(file);
-  };
+  }, [socket, selectedContact]);
 
   // Handle image upload
-  const handleImageUpload = async (e) => {
+  const handleImageUpload = useCallback(async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -368,44 +373,45 @@ const App = () => {
       toast.success('Image sent!');
     };
     reader.readAsDataURL(file);
-  };
+  }, [socket, selectedContact]);
 
   // Handle voice/video call
-  const handleCall = (type) => {
+  const handleCall = useCallback((type) => {
     if (!selectedContact) {
       toast.warn('Please select a contact first');
       return;
     }
     startCall(selectedContact._id, type);
     toast.info(`Starting ${type} call with ${selectedContact.username}...`);
-  };
+  }, [selectedContact, startCall]);
 
-  const handleEndCall = () => {
+  const handleEndCall = useCallback(() => {
     endCall();
     toast.success('Call ended');
-  };
+  }, [endCall]);
 
   // Toggle mute
-  const toggleMute = () => {
+  const toggleMute = useCallback(() => {
     if (localStream) {
       localStream.getAudioTracks().forEach(track => {
         track.enabled = !track.enabled;
       });
       setIsMuted(!isMuted);
     }
-  };
+  }, [localStream, isMuted]);
 
   // Toggle video
-  const toggleVideo = () => {
+  const toggleVideo = useCallback(() => {
     if (localStream && callType?.type === 'video') {
       localStream.getVideoTracks().forEach(track => {
         track.enabled = !track.enabled;
       });
       setIsVideoOff(!isVideoOff);
     }
-  };
+  }, [localStream, callType, isVideoOff]);
 
-  const MessageBubble = ({ message, senderUsername }) => {
+  // Memoized MessageBubble Component
+  const MessageBubble = memo(({ message, senderUsername }) => {
     const isSelf = String(message.senderId) === String(currentUser?.id);
     const senderName = isSelf ? 'You' : senderUsername;
 
@@ -415,8 +421,8 @@ const App = () => {
         case 'image':
           return (
             <div className="space-y-2">
-              <img
-                src={message.content}
+              <img 
+                src={message.content} 
                 alt={message.fileName || 'Shared image'}
                 className="rounded-lg max-w-xs max-h-64 object-cover cursor-pointer hover:opacity-90 transition-opacity"
                 onClick={() => window.open(message.content, '_blank')}
@@ -426,7 +432,7 @@ const App = () => {
               )}
             </div>
           );
-
+        
         case 'file':
           return (
             <div className="flex items-center gap-3 p-3 bg-black/20 rounded-lg">
@@ -437,8 +443,8 @@ const App = () => {
                   {(message.fileSize / 1024).toFixed(2)} KB
                 </p>
               </div>
-              <a
-                href={message.content}
+              <a 
+                href={message.content} 
                 download={message.fileName}
                 className="p-2 hover:bg-white/10 rounded-lg transition-colors"
               >
@@ -446,7 +452,7 @@ const App = () => {
               </a>
             </div>
           );
-
+        
         default:
           return <p className="text-sm leading-relaxed">{message.content}</p>;
       }
@@ -461,10 +467,11 @@ const App = () => {
             </div>
           )}
           <div className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}>
-            <div className={`px-4 py-2 rounded-2xl ${isSelf
-                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-br-none'
+            <div className={`px-4 py-2 rounded-2xl ${
+              isSelf 
+                ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-br-none' 
                 : 'bg-gray-800 text-gray-100 rounded-bl-none'
-              } shadow-lg backdrop-blur-sm`}>
+            } shadow-lg backdrop-blur-sm`}>
               {!isSelf && <p className="text-xs font-semibold mb-1 text-purple-300">{senderName}</p>}
               {renderMessageContent()}
             </div>
@@ -480,7 +487,46 @@ const App = () => {
         </div>
       </div>
     );
-  };
+  });
+
+  // Memoized online users list
+  const onlineUsersList = useMemo(() => {
+    if (onlineUserProfiles.length === 0) {
+      return (
+        <div className="text-center py-8 text-gray-500 text-sm">
+          <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gray-800/50 flex items-center justify-center">
+            <Shield className="w-8 h-8 text-gray-600" />
+          </div>
+          No other users online
+        </div>
+      );
+    }
+
+    return onlineUserProfiles.map(user => (
+      <div
+        key={user._id}
+        onClick={() => handleSelectContact(user)}
+        className={`flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 group ${
+          selectedContact && selectedContact._id === user._id 
+            ? 'bg-indigo-500/20 border border-indigo-500/30' 
+            : 'hover:bg-gray-800/50'
+        }`}
+      >
+        <div className="relative">
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shadow-lg">
+            {user.username.charAt(0).toUpperCase()}
+          </div>
+          <span className="absolute right-0 bottom-0 w-3.5 h-3.5 bg-green-500 border-2 border-gray-900 rounded-full animate-pulse"></span>
+        </div>
+        <div className="ml-3 flex-1 min-w-0">
+          <p className="text-sm font-semibold text-white truncate group-hover:text-indigo-300 transition-colors">
+            {user.username}
+          </p>
+          <p className="text-xs text-gray-400 truncate">Online • Tap to chat</p>
+        </div>
+      </div>
+    ));
+  }, [onlineUserProfiles, selectedContact, handleSelectContact]);
 
   return (
     <div className="h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex antialiased text-gray-100 overflow-hidden">
@@ -509,7 +555,7 @@ const App = () => {
                 </div>
               </div>
             </div>
-
+            
             {/* Search Bar */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500" />
@@ -528,38 +574,7 @@ const App = () => {
               <span className="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded-full">{onlineUserProfiles.length}</span>
             </div>
 
-            {onlineUserProfiles.length === 0 ? (
-              <div className="text-center py-8 text-gray-500 text-sm">
-                <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-gray-800/50 flex items-center justify-center">
-                  <Shield className="w-8 h-8 text-gray-600" />
-                </div>
-                No other users online
-              </div>
-            ) : (
-              onlineUserProfiles.map(user => (
-                <div
-                  key={user._id}
-                  onClick={() => handleSelectContact(user)}
-                  className={`flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 group ${selectedContact && selectedContact._id === user._id
-                      ? 'bg-indigo-500/20 border border-indigo-500/30'
-                      : 'hover:bg-gray-800/50'
-                    }`}
-                >
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shadow-lg">
-                      {user.username.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="absolute right-0 bottom-0 w-3.5 h-3.5 bg-green-500 border-2 border-gray-900 rounded-full animate-pulse"></span>
-                  </div>
-                  <div className="ml-3 flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-white truncate group-hover:text-indigo-300 transition-colors">
-                      {user.username}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">Online • Tap to chat</p>
-                  </div>
-                </div>
-              ))
-            )}
+            {onlineUsersList}
           </div>
 
           {/* Security Badge */}
@@ -576,13 +591,13 @@ const App = () => {
           {/* Chat Header */}
           <header className="h-16 border-b border-gray-800/50 px-6 flex items-center justify-between bg-gray-900/50 backdrop-blur-xl">
             <div className="flex items-center gap-4">
-              <button
+              <button 
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors"
               >
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
-
+              
               {selectedContact ? (
                 <div className="flex items-center gap-3">
                   <div className="relative">
@@ -614,14 +629,14 @@ const App = () => {
             <div className="flex items-center gap-2">
               {selectedContact && (
                 <>
-                  <button
+                  <button 
                     onClick={() => handleCall('audio')}
                     className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors"
                     title="Voice Call"
                   >
                     <Phone className="w-5 h-5" />
                   </button>
-                  <button
+                  <button 
                     onClick={() => handleCall('video')}
                     className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors"
                     title="Video Call"
@@ -633,10 +648,11 @@ const App = () => {
                   </button>
                 </>
               )}
-              <div className={`px-3 py-1 rounded-full text-xs font-medium ${socket && socket.connected
-                  ? 'bg-green-500/20 text-green-400'
+              <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+                socket && socket.connected 
+                  ? 'bg-green-500/20 text-green-400' 
                   : 'bg-red-500/20 text-red-400'
-                }`}>
+              }`}>
                 {socket && socket.connected ? '● Connected' : '● Offline'}
               </div>
             </div>
@@ -777,10 +793,10 @@ const App = () => {
               <div className="space-y-2">
                 {messages.map((message, index) => (
                   <MessageBubble
-                    key={index}
+                    key={message._id || `msg-${index}`}
                     message={message}
                     senderUsername={
-                      message.senderId === currentUser?.id ? currentUser.username : selectedContact.username
+                      String(message.senderId) === String(currentUser?.id) ? currentUser.username : selectedContact.username
                     }
                   />
                 ))}
@@ -809,16 +825,16 @@ const App = () => {
                 />
 
                 <div className="flex gap-2">
-                  <button
-                    type="button"
+                  <button 
+                    type="button" 
                     onClick={() => fileInputRef.current?.click()}
                     className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white"
                     title="Attach File"
                   >
                     <Paperclip className="w-5 h-5" />
                   </button>
-                  <button
-                    type="button"
+                  <button 
+                    type="button" 
                     onClick={() => imageInputRef.current?.click()}
                     className="p-2 hover:bg-gray-800/50 rounded-lg transition-colors text-gray-400 hover:text-white"
                     title="Send Image"
@@ -826,7 +842,7 @@ const App = () => {
                     <Image className="w-5 h-5" />
                   </button>
                 </div>
-
+                
                 <div className="flex-1 relative">
                   <input
                     type="text"
@@ -841,8 +857,8 @@ const App = () => {
                     }}
                     className="w-full bg-gray-800/50 text-gray-200 px-4 py-3 pr-12 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 border border-gray-700/50 transition-all"
                   />
-                  <button
-                    type="button"
+                  <button 
+                    type="button" 
                     onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
                   >
@@ -883,8 +899,7 @@ const App = () => {
 
       <ToastContainer position="top-right" autoClose={3000} hideProgressBar={false} theme="dark" />
 
-      <style dangerouslySetInnerHTML={{
-        __html: `
+      <style dangerouslySetInnerHTML={{__html: `
         @keyframes slideIn {
           from {
             opacity: 0;
@@ -948,7 +963,7 @@ const App = () => {
         .mirror {
           transform: scaleX(-1);
         }
-      `}} />
+      `}}/>
     </div>
   );
 };

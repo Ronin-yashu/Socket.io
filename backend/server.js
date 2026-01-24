@@ -1,3 +1,5 @@
+import dotenv from "dotenv"
+dotenv.config()
 import express from "express"
 import cors from "cors"
 import mongoose from "mongoose"
@@ -12,6 +14,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 
 const jwt_secret = process.env.JWT_SECRET;
+console.log("the jwt from env is ",jwt);
 
 const app = express()
 const port = 3000
@@ -41,10 +44,11 @@ io.use((socket, next) => {
   }
 });
 
-const ATLAS_URI = process.env.ATLAS_URI;
 const clientOptions = { serverApi: { version: '1', strict: true, deprecationErrors: true } };
 try {
-  await mongoose.connect(ATLAS_URI, clientOptions);
+  await mongoose.connect(process.env.ATLAS_URI, clientOptions);
+  await mongoose.connection.db.admin().command({ ping: 1 });
+  console.log("Pinged your deployment. You successfully connected to MongoDB!");
   console.log("Connected to MongoDB");
 } catch (err) {
   console.error("Failed to connect to MongoDB", err);
@@ -491,6 +495,156 @@ app.post('/api/messages/read', auth, async (req, res) => {
   } catch (error) {
     console.error("Mark Read Error:", error);
     res.status(500).json({ message: 'Failed to mark messages as read.' });
+  }
+});
+// ADD THESE ROUTES TO YOUR server.js (after the existing routes, before server.listen)
+
+// FORGOT PASSWORD ROUTES
+
+// Step 1: Check Username and Account Type
+app.post('/api/forgot/check-username', async (req, res) => {
+  const { username } = req.body;
+  
+  try {
+    // Find user by username
+    const user = await User.findOne({ username });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'Username not found. Please check and try again.' });
+    }
+
+    // Return account type and phone number
+    res.status(200).json({
+      message: 'Account found',
+      accountType: user.myRadioGroup, // 'Forgot' or 'NoForgot'
+      phoneNumber: user.number,
+      username: user.username
+    });
+  } catch (error) {
+    console.error('Check Username Error:', error);
+    res.status(500).json({ message: 'Server error. Please try again.' });
+  }
+});
+
+// Step 2: Request OTP
+app.post('/api/forgot/request-otp', authLimiter, async (req, res) => {
+  const { username, phoneNumber } = req.body;
+  
+  try {
+    // Find user by username
+    const user = await User.findOne({ username });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    // Check if account allows recovery
+    if (user.myRadioGroup === 'NoForgot') {
+      return res.status(403).json({ 
+        message: 'This is a SECURE ACCOUNT without recovery option. Password cannot be reset.' 
+      });
+    }
+
+    // Verify phone number matches
+    if (user.number !== phoneNumber) {
+      return res.status(400).json({ message: 'Phone number does not match account.' });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Create OTP token (expires in 10 minutes)
+    const otpToken = jwt.sign(
+      { username, phoneNumber, otp, type: 'otp_verification' },
+      jwt_secret,
+      { expiresIn: '10m' }
+    );
+
+    // TODO: Send OTP via SMS service (Twilio, AWS SNS, etc.)
+    // For now, we'll log it to console (REMOVE IN PRODUCTION)
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`📱 OTP for ${username} (${phoneNumber}): ${otp}`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    res.status(200).json({
+      message: `OTP sent to ${phoneNumber}. Valid for 10 minutes. (Check server console in development)`,
+      otpToken: otpToken
+    });
+  } catch (error) {
+    console.error('Request OTP Error:', error);
+    res.status(500).json({ message: 'Server error. Please try again.' });
+  }
+});
+
+// Step 3: Verify OTP
+app.post('/api/forgot/verify-otp', async (req, res) => {
+  const { otpToken, otp } = req.body;
+
+  if (!otpToken || !otp) {
+    return res.status(400).json({ message: 'OTP token and code required.' });
+  }
+
+  try {
+    const decoded = jwt.verify(otpToken, jwt_secret);
+
+    if (decoded.type !== 'otp_verification') {
+      return res.status(401).json({ message: 'Invalid OTP token.' });
+    }
+
+    if (decoded.otp !== otp) {
+      return res.status(401).json({ message: 'Invalid OTP. Please try again.' });
+    }
+
+    res.status(200).json({
+      message: 'OTP verified successfully! You can now reset your password.',
+    });
+  } catch (error) {
+    console.error('Verify OTP Error:', error);
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'OTP expired. Please request a new one.' });
+    }
+    res.status(500).json({ message: 'Server error during OTP verification.' });
+  }
+});
+
+// Step 4: Reset Password
+app.post('/api/forgot/reset-password', async (req, res) => {
+  const { otpToken, username, newPassword } = req.body;
+
+  if (!otpToken || !username || !newPassword) {
+    return res.status(400).json({ message: 'All fields are required.' });
+  }
+
+  try {
+    // Verify OTP token
+    const decoded = jwt.verify(otpToken, jwt_secret);
+
+    if (decoded.type !== 'otp_verification' || decoded.username !== username) {
+      return res.status(401).json({ message: 'Invalid verification token.' });
+    }
+
+    // Find user
+    const user = await User.findOne({ username });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    // Update password (will be hashed by the pre-save hook in User model)
+    user.password = newPassword;
+    await user.save();
+
+    console.log(`✅ Password reset successful for user: ${username}`);
+
+    res.status(200).json({
+      message: 'Password reset successfully! You can now log in with your new password.',
+    });
+  } catch (error) {
+    console.error('Reset Password Error:', error);
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Verification expired. Please start over.' });
+    }
+    res.status(500).json({ message: 'Server error during password reset.' });
   }
 });
 
